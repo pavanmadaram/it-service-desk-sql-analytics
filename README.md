@@ -6,6 +6,8 @@ This project analyzes 6 months of IT service desk ticket data to answer real ope
 
 The dataset (~1,500 tickets across 5 teams and 15 agents) was built to reflect realistic patterns — uneven weekly volume, SLA targets that vary by ticket type and priority, and teams with different breach tendencies — so the analysis surfaces genuine, non-obvious findings rather than a flat, uniform dataset.
 
+All query outputs below are actual results from running these queries in MySQL Workbench against the dataset in this repo.
+
 **Tech used:** MySQL (CTEs, window functions, conditional aggregation, date logic, pivoting)
 
 ---
@@ -39,7 +41,23 @@ FROM weekly_counts
 ORDER BY week_label;
 ```
 
-**Finding:** Weekly volume trended upward over the period, from roughly the high-teens/40s early on to a sustained 55–75 tickets/week by the final month. The 4-week rolling average smooths out spike weeks (system rollouts) and slow weeks (holidays) to reveal a consistent underlying growth trend rather than random noise.
+**Output (sample):**
+
+| week_label | ticket_count | rolling_4wk_avg |
+|---|---|---|
+| 2026-04 | 8 | 8.00 |
+| 2026-05 | 59 | 33.50 |
+| 2026-06 | 53 | 40.00 |
+| 2026-07 | 65 | 46.25 |
+| 2026-08 | 59 | 59.00 |
+| 2026-09 | 74 | 62.75 |
+| 2026-10 | 56 | 63.50 |
+| 2026-11 | 58 | 61.75 |
+| 2026-12 | 72 | 65.00 |
+| 2026-13 | 83 | 67.25 |
+| ... | ... | ... |
+
+**Finding:** After a partial first week, volume quickly stabilizes in the 50s–80s per week, and the 4-week rolling average climbs steadily from ~34 to the mid-60s and beyond — a clear, sustained growth trend rather than random noise.
 
 ---
 
@@ -68,7 +86,17 @@ GROUP BY team_name
 ORDER BY breach_rate DESC;
 ```
 
-**Finding:** Breach rates vary sharply by team — **Hardware Support (64.6%)** and **Network Operations (63.7%)** breach far more often than **Security & Access (44.5%)** and **Helpdesk Tier 1 (46.1%)**. Hardware and Network teams also run the longest overdue (3.4–4.3 days past target on average), pointing to a resourcing or process gap specific to those two teams rather than a company-wide SLA problem.
+**Output:**
+
+| team_name | total_resolved_tickets | breach_count | breach_rate | avg_days_overdue |
+|---|---|---|---|---|
+| Hardware Support | 195 | 148 | 75.90 | 3.38 |
+| Network Operations | 146 | 102 | 69.86 | 4.37 |
+| Application Support | 244 | 145 | 59.43 | 4.06 |
+| Helpdesk Tier 1 | 319 | 179 | 56.11 | 2.22 |
+| Security & Access | 274 | 133 | 48.54 | 3.77 |
+
+**Finding:** **Hardware Support** breaches SLA on over 3 out of every 4 resolved tickets (75.9%) — by far the worst rate in the org — with **Network Operations** close behind at 69.9% and also running the longest overdue on average (4.37 days past target). Security & Access has the *lowest* breach rate on resolved tickets (48.5%), which is worth reading alongside Q5 below — it suggests this team isn't resolving badly, it's simply not resolving *enough* of what comes in (see backlog and capacity findings).
 
 ---
 
@@ -93,7 +121,25 @@ GROUP BY ticket_type, priority
 ORDER BY ticket_type, priority;
 ```
 
-**Finding:** Resolution time scales predictably with priority within each ticket type (e.g., Access Requests: 1.5 days at Urgent vs. 6.1 days at Low) — confirming prioritization logic is generally working as intended. This baseline is useful for spotting future anomalies (e.g., an Urgent ticket type suddenly taking as long as a Low one).
+**Output (sample):**
+
+| ticket_type | priority | avg_resolution_days | ticket_count |
+|---|---|---|---|
+| Access Request | High | 2.46 | 35 |
+| Access Request | Low | 6.62 | 69 |
+| Access Request | Medium | 3.07 | 107 |
+| Access Request | Urgent | 2.10 | 10 |
+| Account Setup | High | 2.74 | 27 |
+| Account Setup | Low | 7.45 | 31 |
+| Account Setup | Medium | 3.74 | 65 |
+| Account Setup | Urgent | 1.80 | 10 |
+| Hardware Issue | High | 3.14 | 57 |
+| Hardware Issue | Low | 8.50 | 88 |
+| Hardware Issue | Medium | 6.36 | 137 |
+| Hardware Issue | Urgent | 1.53 | 17 |
+| ... | ... | ... | ... |
+
+**Finding:** Resolution time scales as expected with priority within each ticket type — Urgent tickets consistently resolve fastest, Low the slowest. Notably, **Hardware Issue (Medium)** takes 6.36 days on average across 137 tickets — a large volume moving slowly, and a likely contributor to Hardware Support's high breach rate in Q2.
 
 ---
 
@@ -117,7 +163,20 @@ WHERE days_overdue > 0
 ORDER BY days_overdue DESC;
 ```
 
-**Finding:** Of the open tickets currently in the queue, nearly all are already past their SLA deadline — some by over a month. This is a clear, actionable red flag: the backlog isn't just large, it's stale, suggesting open tickets are being deprioritized rather than actively worked.
+**Output (top rows):**
+
+| ticket_id | ticket_type | priority | team_name | days_open | sla_target_days | days_overdue |
+|---|---|---|---|---|---|---|
+| 1337 | Network Issue | High | Network Operations | 38 | 2 | 36 |
+| 1346 | Software Issue | Medium | Helpdesk Tier 1 | 38 | 3 | 35 |
+| 1381 | Network Issue | Medium | Helpdesk Tier 1 | 37 | 3 | 34 |
+| 1358 | Account Setup | Medium | Security & Access | 37 | 3 | 34 |
+| 1369 | Software Issue | High | Application Support | 36 | 2 | 34 |
+| 1345 | Network Issue | Medium | Network Operations | 36 | 3 | 33 |
+| 1348 | Hardware Issue | Medium | Helpdesk Tier 1 | 37 | 4 | 33 |
+| ... | ... | ... | ... | ... | ... | ... |
+
+**Finding:** Every open ticket in this list is overdue by **30+ days** against SLA targets of just 2–5 days — this isn't a mild backlog, it's tickets sitting untouched for roughly 10x their expected resolution window. The backlog is stale, not just large, suggesting open tickets are being deprioritized rather than actively worked once they age past a certain point.
 
 ---
 
@@ -143,7 +202,20 @@ WHERE ticket_count > capacity_per_week
 ORDER BY over_capacity_by DESC;
 ```
 
-**Finding:** **Security & Access** is the team most consistently over capacity — appearing repeatedly at the top of over-capacity weeks, at times handling nearly 3x its weekly capacity (23 tickets against a capacity of 8). This directly explains why it also shows a high SLA breach rate: the team is structurally under-resourced relative to its incoming demand, not underperforming.
+**Output (top rows):**
+
+| team_name | week_label | ticket_count | capacity_per_week | over_capacity_by |
+|---|---|---|---|---|
+| Security & Access | 2026-13 | 23 | 8 | 15 |
+| Security & Access | 2026-12 | 19 | 8 | 11 |
+| Security & Access | 2026-11 | 18 | 8 | 10 |
+| Security & Access | 2026-07 | 17 | 8 | 9 |
+| Security & Access | 2026-16 | 17 | 8 | 9 |
+| Security & Access | 2026-04 | 16 | 8 | 8 |
+| Security & Access | 2026-09 | 16 | 8 | 8 |
+| ... | ... | ... | ... | ... |
+
+**Finding:** **Security & Access dominates every one of the top over-capacity weeks** — at its worst (week 2026-13), the team received **23 tickets against a capacity of just 8**, nearly 3x its sustainable load. This directly explains the Q2 finding: the team isn't breaching SLA on what it resolves because it's structurally too small for its incoming demand — the strain shows up as backlog and unresolved volume instead of late resolutions.
 
 ---
 
@@ -174,7 +246,25 @@ SELECT * FROM ranked_agents WHERE agent_rank <= 3
 ORDER BY team_name, agent_rank;
 ```
 
-**Finding:** Performance varies meaningfully within teams, not just across them — e.g., on Helpdesk Tier 1, the top agent resolved 74 tickets within SLA vs. 42 for the third-ranked agent. This is useful both for recognition and for identifying who might mentor lower-performing teammates.
+**Output:**
+
+| team_name | agent_name | tickets_within_sla | agent_rank |
+|---|---|---|---|
+| Application Support | Farhan Khan | 37 | 1 |
+| Application Support | Priya Menon | 32 | 2 |
+| Application Support | Neha Verma | 30 | 3 |
+| Hardware Support | Divya Nair | 30 | 1 |
+| Hardware Support | Karan Mehta | 17 | 2 |
+| Helpdesk Tier 1 | Sneha Iyer | 64 | 1 |
+| Helpdesk Tier 1 | Ravi Kumar | 42 | 2 |
+| Helpdesk Tier 1 | Amit Shah | 34 | 3 |
+| Network Operations | Vikram Singh | 13 | 1 |
+| Network Operations | Ananya Rao | 12 | 2 |
+| Network Operations | Rohit Sharma | 11 | 3 |
+| Security & Access | Meera Pillai | 72 | 1 |
+| Security & Access | Arjun Nair | 69 | 2 |
+
+**Finding:** Performance gaps within teams can be large — on Helpdesk Tier 1, the top agent (Sneha Iyer, 64 tickets within SLA) nearly doubles the third-ranked agent (Amit Shah, 34). Hardware Support only shows 2 agents total, meaning its already-low headcount is a compounding factor in that team's high breach rate from Q2.
 
 ---
 
@@ -203,7 +293,19 @@ FROM monthly_compliance
 ORDER BY month_label;
 ```
 
-**Finding:** This is the headline concern of the whole analysis. SLA compliance rose slightly through Q1 (47.7% → 50.4%), then declined steadily from April onward, dropping to **36.7% by July** — a fall of nearly 14 points from its peak. Read alongside Q1 (rising volume) and Q5 (capacity strain), this tells a clear story: **incoming demand has outpaced team capacity, and compliance is deteriorating as a direct result.**
+**Output:**
+
+| month_label | compliance_rate | previous_month_rate | change_in_percentage |
+|---|---|---|---|
+| 2026-01 | 41.67 | NULL | NULL |
+| 2026-02 | 40.65 | 41.67 | -1.02 |
+| 2026-03 | 41.30 | 40.65 | 0.65 |
+| 2026-04 | 39.90 | 41.30 | -1.40 |
+| 2026-05 | 43.10 | 39.90 | 3.20 |
+| 2026-06 | 36.93 | 43.10 | -6.17 |
+| 2026-07 | 26.53 | 36.93 | -10.40 |
+
+**Finding:** This is the headline concern of the whole analysis. Compliance hovered in a relatively stable 40–43% range through May, then **collapsed in the final two months** — dropping 6.2 points in June and a further 10.4 points in July, ending at just **26.53%**, down 15 points from its January starting level. The decline isn't just happening, it's *accelerating*. Read alongside Q1 (rising volume) and Q5 (capacity strain concentrated in specific teams), the story is clear: **incoming demand has outpaced team capacity, and the gap is widening month over month, not stabilizing.**
 
 ---
 
@@ -229,7 +331,19 @@ GROUP BY month_label
 ORDER BY month_label;
 ```
 
-**Finding:** Software Issues are consistently the largest single category month over month, with Access Requests notably spiking in March (72, up from 32–36 in prior months) — likely tied to a specific event (e.g., a system migration or new hire batch) worth investigating with the actual team.
+**Output:**
+
+| month_label | hardware_issue | software_issue | access_request | network_issue | account_setup |
+|---|---|---|---|---|---|
+| 2026-01 | 55 | 64 | 32 | 39 | 29 |
+| 2026-02 | 66 | 71 | 36 | 49 | 29 |
+| 2026-03 | 63 | 83 | 72 | 38 | 34 |
+| 2026-04 | 58 | 82 | 46 | 32 | 28 |
+| 2026-05 | 65 | 68 | 38 | 34 | 22 |
+| 2026-06 | 66 | 68 | 45 | 35 | 20 |
+| 2026-07 | 12 | 8 | 4 | 8 | 4 |
+
+**Finding:** Software Issues are consistently the largest category month over month. **Access Requests spike sharply in March (72, roughly double the surrounding months)** — likely tied to a specific event (e.g., a system migration or a new hire batch) worth investigating with the actual team. July's low totals reflect a partial month of data, not a real drop in demand.
 
 ---
 
@@ -252,3 +366,4 @@ Several business questions were ambiguous by design (matching real stakeholder r
 - Date/time logic (business-relevant SLA and aging calculations)
 - Pivoting with `MAX(CASE WHEN...)`
 - Explicit handling of ambiguous business logic — stating assumptions rather than guessing silently
+- Cross-question synthesis — connecting findings across separate queries (volume, capacity, and compliance) into one coherent narrative
